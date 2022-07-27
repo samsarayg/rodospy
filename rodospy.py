@@ -662,15 +662,18 @@ class VectorGridSeries(object):
         self.z_index  = z_index
         for key in ddict:
             setattr(self,key,ddict[key])
-        self.output_dir = "{}/{}/{}/{}".format(self.rodos.storage,
-                                               self.task.project.name,
+        self.output_dir = "{}/{}/{}/{}/{}/{}".format(self.rodos.storage,
+                                               #self.task.project.name,   # Too long for Windows
+                                               self.task.project.uid,
                                                self.task.project.modelchainname,
-                                               self.datapath.replace(" ","_"))
+                                               self.datapath.replace(" ","_").split("=;=")[-1],   # Shorten the name for Windows
+                                               str(self.time_index),
+                                               str(self.z_index))
 
     def __repr__(self):
         return ("<VectorGridSeries %s | %s t: %i, z: %i>" % (self.groupname, 
                                                              self.name,
-                                                             self.t_index,
+                                                             self.time_index,
                                                              self.z_index))
 
     def get_filepath(self):
@@ -710,7 +713,7 @@ class VectorGridSeries(object):
                 ('vertical', str(self.z_index)),
                 ('includeSLD', "1")
             ]
-        print ( wps_input )
+        #print ( wps_input )
         if threshold!=None:
             wps_input.append ( ('threshold', str(threshold) ) )
         else:
