@@ -14,11 +14,17 @@ settings = {
 }
 
 try:
+    import mysettings
+    settings = mysettings.settings
+except ImportError:
+    pass
+  
+try:
     from rodospy import *
 except ImportError: 
     import sys, os.path
-    sys.path.append(os.path.abspath('../'))
-    sys.path.append(os.path.abspath('.'))
+    sys.path.append(os.path.abspath('C:/Users/Sara/Source/Repos/samsarayg/rodospy'))
+    sys.path.append(os.path.abspath('C:/Users/Sara/Source/Repos/samsarayg/rodospy/examples'))
     from rodospy import *
 
 # set debug level logging

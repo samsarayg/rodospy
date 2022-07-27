@@ -1,3 +1,5 @@
 *.pyc
 *.swp
 venv
+/.vs
+/examples/mysettings.py

@@ -725,7 +725,7 @@ class VectorGridSeries(object):
                         headers = xml_headers)
         logger.debug ( "Execute WPS with values %s" % (str(wps_input)) )
         response = urlopen( req )
-        temp = tempfile.NamedTemporaryFile() #2
+        temp = tempfile.NamedTemporaryFile(delete=False) #2 # For Windows
         try:
             resp_file = open(temp.name, "wb")
             resp_file.write( response.read() )
@@ -739,6 +739,8 @@ class VectorGridSeries(object):
                 os.rmdir ( output_dir )
                 raise RodosPyException ( open(temp.name).read()  )
         finally:
-            temp.close() 
+            temp.close()
+            os.unlink(temp.name)   # For Windows, remove manually
+
         self.filepath = output_dir
         return self.filepath
