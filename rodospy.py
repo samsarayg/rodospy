@@ -82,7 +82,7 @@ request_template = """<?xml version="1.0" encoding="UTF-8"?>
             <wps:Input>
               <ows:Identifier>vertical</ows:Identifier>
               <wps:Data>
-                <wps:LiteralData>0</wps:LiteralData>
+                <wps:LiteralData>VERTICAL</wps:LiteralData>
               </wps:Data>
             </wps:Input>
             <wps:Input>
@@ -273,6 +273,7 @@ class Task(object):
                                                                    d,
                                                                    t_index,
                                                                    z_index) )
+                        
         self.deposition = {}
         self.wet_deposition = {}
         self.dry_deposition = {}
@@ -286,6 +287,8 @@ class Task(object):
         self.inhalation_dose = {}
         self.skin_dose = {}
         self.wind_field = {}
+        self.mpp2adm_wind = {}
+        self.mpp2adm_wind10 = {}
         
         # classify grid series to dictionaries
         # TODO: some items still missing (FDMT, Emersim, DEPOM etc.)
@@ -342,6 +345,10 @@ class Task(object):
         for i in self.vectorseries:
             if i.groupname=="WindFields_WindFields":
                 self.wind_field["{}_{}".format(i.time_index,i.z_index)] = i
+            elif i.groupname=="MPPtoADM_Wind":
+                self.mpp2adm_wind["{}_{}".format(i.time_index,i.z_index)] = i
+            elif i.groupname=="MPPtoADM_Wind10":
+                self.mpp2adm_wind10["{}_{}".format(i.time_index,i.z_index)] = i
 
 class GridSeries(object):
     "Series of grid results"
@@ -709,7 +716,7 @@ class VectorGridSeries(object):
                                                       self.task.modelwrappername)),
                 ('dataitem',
                  "path='%s'" % self.datapath),
-                ('columns', str(self.time_index) ),
+                ('columns', str(self.time_index)),
                 ('vertical', str(self.z_index)),
                 ('includeSLD', "1")
             ]
@@ -722,13 +729,14 @@ class VectorGridSeries(object):
         x = x.replace("TASKARG",wps_input[0][1])
         x = x.replace("DATAITEM",wps_input[1][1])
         x = x.replace("COLUMNS",wps_input[2][1])
+        x = x.replace("VERTICAL",wps_input[3][1])
         x = x.replace("THRESHOLD",wps_input[5][1])
         req = Request ( self.rodos.w["url"],
                         data = x.encode(), 
                         headers = xml_headers)
         logger.debug ( "Execute WPS with values %s" % (str(wps_input)) )
         response = urlopen( req )
-        temp = tempfile.NamedTemporaryFile(delete=False) #2 # For Windows
+        temp = tempfile.NamedTemporaryFile(delete=False) #2 # For Windows (https://github.com/bravoserver/bravo/issues/111#issuecomment-826990)
         try:
             resp_file = open(temp.name, "wb")
             resp_file.write( response.read() )
