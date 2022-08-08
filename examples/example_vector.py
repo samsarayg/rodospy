@@ -40,17 +40,26 @@ projects = rodos.projects
 
 
 # Choose the latest project where model chain is "LSMC+EMERSIM+DEPOM+FDMT"
-project = rodos.get_projects(filters={"modelchainname":
-                                      "Emergency"})[-1]
-
+#project = rodos.get_projects(filters={"modelchainname":
+#                                      "Emergency"})[-1]
+project = rodos.get_projects(filters={"uid":
+                                      "6c13fbfa-ac15-415f-7daa-0fbde7e0185d"})[-1]
+print(project)
 # Get the only task and also for wind series 12 first timestemps and 10 vertical levels
-task = project.get_tasks({},12,1)[0]
+task = project.get_tasks({},1,20)[0]
 
+
+for key in task.mpp2adm_levelhght.keys():
+    levelhght = task.mpp2adm_levelhght[key]
+    print ( key, levelhght.timeSeries(113.93279,22.306732) )
+
+
+print(task.mpp2adm_wind.keys())
 # Print following wind field series is available
-for wind_field in task.wind_field.keys():
+for wind_field in task.mpp2adm_wind.keys():
     #print ( wind_field )
-    print ( task.wind_field[wind_field] )
-    gpkg_file = task.wind_field[wind_field].gpkg_file()
+    print ( task.mpp2adm_wind[wind_field] )
+    gpkg_file = task.mpp2adm_wind[wind_field].gpkg_file()
     gpkg_data = gpkg_driver.Open(gpkg_file)
 
     #print ("No of layers:", len(gpkg_data))

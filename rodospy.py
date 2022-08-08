@@ -1,4 +1,5 @@
 
+from ast import Lambda
 from owslib.wps import WebProcessingService
 try:
     import osr
@@ -14,7 +15,7 @@ import json
 import codecs
 import tempfile
 import zipfile
-from dateutil.parser import parse
+from dateutil.parser import isoparse
 from xml.etree.ElementTree import XML, fromstring, tostring
 from pathlib import Path
 import numpy as n
@@ -116,7 +117,7 @@ def datetime_parser(value):
             value[index] = datetime_parser(row)
     elif isinstance(value, str) and value:
         try:
-            value = parse(value)
+            value = isoparse(value)
         except (ValueError, AttributeError):
             pass
     return value
@@ -242,7 +243,7 @@ class Project(object):
             self.load(vector_t_indices,vector_z_indices)
         tasks = []
         for t in self.details_dict["tasks"]:
-            if filters.items()<=t.items():
+            if filters.items() <= t.items():
                 tasks.append ( Task(self,t,vector_t_indices,vector_z_indices) )
         return tasks
 
@@ -265,7 +266,11 @@ class Task(object):
         self.vectorseries = []
         for d in tdict["dataitems"]:
             if d["dataitem_type"]=="GridSeries":
-                self.gridseries.append( GridSeries(self,d) )
+                for z_index in range(vector_z_indices):
+                    self.gridseries.append( GridSeries(
+                      self,
+                      d,
+                      z_index) )
             elif d["dataitem_type"]=="VectorGridSeries":
                 for t_index in range(vector_t_indices):
                     for z_index in range(vector_z_indices):
@@ -287,6 +292,7 @@ class Task(object):
         self.inhalation_dose = {}
         self.skin_dose = {}
         self.wind_field = {}
+        self.mpp2adm_levelhght = {}
         self.mpp2adm_wind = {}
         self.mpp2adm_wind10 = {}
         
@@ -343,6 +349,8 @@ class Task(object):
                 self.total_dose[key] = i
             elif i.groupname=="Environmental_Uniform_Landuse":
                 self.land_use = i
+            elif i.groupname=="MPPtoADM_LevelHght":
+                self.mpp2adm_levelhght["{}".format(i.z_index)] = i
         # classify also vector data
         # TODO: add soma more
         for i in self.vectorseries:
@@ -358,17 +366,19 @@ class GridSeries(object):
     def __repr__(self):
         return ("<GridSeries %s | %s>" % (self.groupname, self.name))
 
-    def __init__(self,task,ddict):
+    def __init__(self,task,ddict,z_index=0):
         self.task = task
         self.project = task.project
         self.rodos = task.rodos
         self.gpkgfile = None
+        self.z_index = z_index
         for key in ddict:
             setattr(self,key,ddict[key])
-        self.output_dir = "{}/{}/{}/{}".format(self.rodos.storage,
-                                               self.task.project.name,
+        self.output_dir = "{}/{}/{}/{}/{}".format(self.rodos.storage,
+                                               self.task.project.uid,
                                                self.task.project.modelchainname,
-                                               self.datapath.replace(" ","_"))
+                                               self.datapath.replace(" ","_").split("=;=")[-1],   # Shorten the name for Windows)
+                                               str(self.z_index))
 
     def times(self):
         "Read timestamps of data"
@@ -428,7 +438,7 @@ class GridSeries(object):
                 ('dataitem',
                  "path='%s'" % self.datapath),
                 ('columns', time_columns), 
-                ('vertical', "0"), # TODO: think!
+                ('vertical', self.z_index), # TODO: think!
                 ('includeSLD', "1")
             ]
         if threshold!=None:
@@ -439,6 +449,7 @@ class GridSeries(object):
         x = x.replace("TASKARG",wps_input[0][1])
         x = x.replace("DATAITEM",wps_input[1][1])
         x = x.replace("COLUMNS",wps_input[2][1])
+        x = x.replace("VERTICAL",str(wps_input[3][1]))
         x = x.replace("THRESHOLD",wps_input[5][1])
         #wps_run = self.rodos.wps.execute('gs:JRodosGeopkgWPS',wps_input)
         req = Request ( self.rodos.w["url"],
@@ -446,7 +457,7 @@ class GridSeries(object):
                         headers = xml_headers)
         logger.debug ( "Execute WPS with values %s" % (str(wps_input)) )
         response = urlopen( req )
-        temp = tempfile.NamedTemporaryFile() #2
+        temp = tempfile.NamedTemporaryFile(delete=False) #2 # For Windows (https://github.com/bravoserver/bravo/issues/111#issuecomment-826990)
         try:
             resp_file = open(temp.name, "wb")
             resp_file.write( response.read() )
@@ -461,6 +472,8 @@ class GridSeries(object):
                 raise RodosPyException ( open(temp.name).read()  )
         finally:
             temp.close() 
+            os.unlink(temp.name)   # For Windows, remove manually
+
         self.filepath = output_dir
         return self.filepath
 
@@ -545,7 +558,7 @@ class GridSeries(object):
         for key in sorted(values.keys()):
             x.append(key)
             y.append(values[key])
-        return {"times": list(map(datetime.fromtimestamp,x)), 
+        return {"times": list(map(lambda n: None if n == 0 else datetime.fromtimestamp(n), x)), 
                 "values": y, 
                 "unit": self.unit, 
                 "title": "{} at point ({},{})".format(self.name,
@@ -672,7 +685,7 @@ class VectorGridSeries(object):
         self.rodos = task.rodos
         self.gpkgfile = None
         self.time_index = time_index
-        self.z_index  = z_index
+        self.z_index = z_index
         for key in ddict:
             setattr(self,key,ddict[key])
         self.output_dir = "{}/{}/{}/{}/{}/{}".format(self.rodos.storage,
