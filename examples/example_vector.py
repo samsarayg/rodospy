@@ -13,6 +13,9 @@ settings = {
     }
 }
 
+from dateutil.parser import parse
+from datetime import datetime, timedelta
+
 try:
     import mysettings
     settings = mysettings.settings
@@ -46,34 +49,24 @@ project = rodos.get_projects(filters={"uid":
                                       "6c13fbfa-ac15-415f-7daa-0fbde7e0185d"})[-1]
 print(project)
 # Get the only task and also for wind series 12 first timestemps and 10 vertical levels
-task = project.get_tasks({},1,20)[0]
+task = project.get_tasks({},2,2)[0]
 
-
-for key in task.mpp2adm_levelhght.keys():
-    levelhght = task.mpp2adm_levelhght[key]
-    print ( key, levelhght.timeSeries(113.93279,22.306732) )
-
-
-print(task.mpp2adm_wind.keys())
+#print(task.mpp2adm_levelhght.times())
+#print(task.mpp2adm_levelhght.levels())
+#print(task.mpp2adm_levelhght.gridseries)
+cell = None 
+for key in task.mpp2adm_levelhght.gridseries:
+    levelhght = task.mpp2adm_levelhght.gridseries[key]
+    print ( key, levelhght.timeSeries(113.939,22.31) )
+    if cell is None: 
+        cell = levelhght.getCell(113.939,22.31)
+    
 # Print following wind field series is available
+#print(project.startOfRelease, project.timestepOfPrognosis, project.durationOfPrognosis)
 for wind_field in task.mpp2adm_wind.keys():
-    #print ( wind_field )
-    print ( task.mpp2adm_wind[wind_field] )
-    gpkg_file = task.mpp2adm_wind[wind_field].gpkg_file()
-    gpkg_data = gpkg_driver.Open(gpkg_file)
-
-    #print ("No of layers:", len(gpkg_data))
-    layer = gpkg_data.GetLayer(0)
-
-    # Pick up a cell
-    layer.SetAttributeFilter( "cell={:d}".format(8006) )
-
-    for feature in layer:
-      for feat in feature.keys():
-        print(feat, feature.GetField(feat))
-        pass
-
-    print("")
+    value = task.mpp2adm_wind[wind_field].valueAtCell(cell)
+    print(wind_field, value)
+    #print ( project.startOfRelease + timedelta(seconds=project.timestepOfPrognosis * (value["time"] + 1)) , value )
 
 if __name__=="__main__":
     print ( "Sample data loaded.")

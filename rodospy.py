@@ -1,5 +1,7 @@
 
 from ast import Lambda
+from distutils.command.check import check
+from re import T
 from owslib.wps import WebProcessingService
 try:
     import osr
@@ -262,15 +264,22 @@ class Task(object):
             if key!="dataitems":
                 setattr(self,key,tdict[key])
         self.dataitems_json = tdict["dataitems"] # use this for searchs?
+        self.multi_gridseries = []
         self.gridseries = []
         self.vectorseries = []
         for d in tdict["dataitems"]:
             if d["dataitem_type"]=="GridSeries":
-                for z_index in range(vector_z_indices):
+                if d["groupname"]=="MPPtoADM_LevelHght":
+                    self.multi_gridseries.append( GridSeriesMultiLevel(
+                      self,
+                      d,
+                      vector_z_indices) )
+                else:
                     self.gridseries.append( GridSeries(
                       self,
                       d,
-                      z_index) )
+                      0) )
+
             elif d["dataitem_type"]=="VectorGridSeries":
                 for t_index in range(vector_t_indices):
                     for z_index in range(vector_z_indices):
@@ -292,7 +301,7 @@ class Task(object):
         self.inhalation_dose = {}
         self.skin_dose = {}
         self.wind_field = {}
-        self.mpp2adm_levelhght = {}
+        self.mpp2adm_levelhght = {}   # Multiple GridSeries
         self.mpp2adm_wind = {}
         self.mpp2adm_wind10 = {}
         
@@ -349,8 +358,6 @@ class Task(object):
                 self.total_dose[key] = i
             elif i.groupname=="Environmental_Uniform_Landuse":
                 self.land_use = i
-            elif i.groupname=="MPPtoADM_LevelHght":
-                self.mpp2adm_levelhght["{}".format(i.z_index)] = i
         # classify also vector data
         # TODO: add soma more
         for i in self.vectorseries:
@@ -360,6 +367,182 @@ class Task(object):
                 self.mpp2adm_wind["{}_{}".format(i.time_index,i.z_index)] = i
             elif i.groupname=="MPPtoADM_Wind10":
                 self.mpp2adm_wind10["{}_{}".format(i.time_index,i.z_index)] = i
+        # classify grid series having multiple levels to dictionaries
+        for i in self.multi_gridseries:
+            for j in i.gridseries:
+                gridseries = i.gridseries[j]
+                if gridseries.groupname=="MPPtoADM_LevelHght":
+                    self.mpp2adm_levelhght = i
+                    break
+
+
+class GridSeriesMultiLevel(object):
+    "Series of grid results"
+    def __repr__(self):
+        if len(self.gridseries) == 0:
+            return "<GridSeriesMultiLevel>"
+        else:
+            return ("<GridSeriesMultiLevel %s | %s | Levels 0-%s>" % (
+              self.gridseries[0].groupname, 
+              self.gridseries[0].name, 
+              str(self.vector_z_indices
+            )))
+
+    def __init__(self,task,ddict,vector_z_indices=0):
+        self.vector_z_indices = vector_z_indices
+        self.gridseries = {}
+        for z_index in range(self.vector_z_indices):
+            self.gridseries[z_index] = GridSeries(task, ddict, z_index)
+
+    def times(self):
+        return self.gridseries[0].times()
+
+    def levels(self):
+        "Read levels of data"
+        return list(range(0, self.vector_z_indices))
+
+
+######
+class GridSeries_(object):
+    "Series of grid results"
+    def __repr__(self):
+        return ("<GridSeries %s | %s | Levels %s>" % (self.groupname, self.name, str(self.vector_z_indices)))
+
+    def __init__(self,task,ddict,vector_z_indices=0):
+        self.task = task
+        self.project = task.project
+        self.rodos = task.rodos
+        self.gpkgfile = None
+        self.vector_z_indices = vector_z_indices
+        for key in ddict:
+            setattr(self,key,ddict[key])
+            
+        self.output_dir = {}
+        for z_index in range(self.vector_z_indices):
+            self.output_dir[z_index] = "{}/{}/{}/{}/{}".format(self.rodos.storage,
+                                               self.task.project.uid,
+                                               self.task.project.modelchainname,
+                                               self.datapath.replace(" ","_").split("=;=")[-1],   # Shorten the name for Windows)
+                                               str(z_index))
+
+    def times(self):
+        "Read timestamps of data"
+        gis_data = gpkg_driver.Open(self.gpkg_file())
+        layer = gis_data.GetLayer(1) # data layer
+        times = []
+        for feature in layer:
+            time_value = feature.GetField ( "Time" )
+            #unique times
+            if not time_value in times:
+                times.append(time_value)
+        times.sort()
+        # convert epoch times to datetime objects
+        return list(map(lambda t: None if t == 0 else datetime.fromtimestamp(t), times))
+
+    def levels(self):
+        "Read levels of data"
+        return list(range(0, self.vector_z_indices))
+
+    def get_filepath(self,time_columns="0-"):
+        """"
+        Generate filepath if check if it does exists
+        By default all the timestamps are extracted 
+        """
+        for z_index in self.output_dir:
+            if not os.path.isdir(self.output_dir[z_index]):
+                if ("Cloud arriv" in self.datapath or "Cloud lea" in self.datapath):
+                    threshold = -1
+                else:
+                    threshold = 1e-15
+                self.save_gpkg(None, False, threshold, time_columns, z_index)
+        return self.output_dir
+    
+    def gpkg_file(self, time_columns="0-", z_index=0):
+        filelist = os.listdir( self.get_filepath(time_columns)[z_index] ) 
+        for filename in filelist:
+            if filename.split(".")[-1]=="gpkg":
+                break
+        return self.get_filepath(time_columns)[z_index] + "/" + filename
+
+    def gpkg_file_all_level(self, time_columns="0-"):
+        return list(map(lambda z: self.gpkg_file(time_columns, z), range(self.vector_z_indices)))
+
+    def sld_file(self, z_index=0):
+        "get full path of sld file"
+        filelist = os.listdir( self.get_filepath()[z_index] ) 
+        for filename in filelist:
+            if filename.split(".")[-1]=="sld":
+                break
+        return self.get_filepath()[z_index] + "/" + filename
+
+    def sld_file_all_level(self):
+        "get full path of sld file"
+        return list(map(lambda z: self.sld_file(z), range(self.vector_z_indices)))
+        
+    def save_gpkg(self,output_dir=None,force=True,threshold=None,time_columns="0-", z_index=0):
+        "Read and save GeoPackage file from WPS service"
+        if output_dir==None:
+            output_dir = self.output_dir
+            
+        if force is False:
+            # Check if filepath does exists
+            filelist = os.listdir(output_dir[z_index])
+            if len(filelist) > 0:
+                # Return the existing file
+                return os.path.join(output_dir[z_index], filelist[0])
+
+        wps_input = [
+                ('taskArg', 
+                 "project='{}'&amp;model='{}'".format(self.task.project.name,\
+                                                      self.task.modelwrappername)),
+                ('dataitem',
+                 "path='%s'" % self.datapath),
+                ('columns', time_columns), 
+                ('vertical', z_index), # TODO: think!
+                ('includeSLD', "1")
+            ]
+        if threshold!=None:
+            wps_input.append ( ('threshold', str(threshold) ) )
+        else:
+            wps_input.append ( ('threshold', str(threshold) ) )
+        x = "{}".format(request_template)
+        x = x.replace("TASKARG",wps_input[0][1])
+        x = x.replace("DATAITEM",wps_input[1][1])
+        x = x.replace("COLUMNS",wps_input[2][1])
+        x = x.replace("VERTICAL",str(wps_input[3][1]))
+        x = x.replace("THRESHOLD",wps_input[5][1])
+        #wps_run = self.rodos.wps.execute('gs:JRodosGeopkgWPS',wps_input)
+        req = Request ( self.rodos.w["url"],
+                        data = x.encode(), 
+                        headers = xml_headers)
+        logger.debug ( "Execute WPS with values %s" % (str(wps_input)) )
+        response = urlopen( req )
+        temp = tempfile.NamedTemporaryFile(delete=False) #2 # For Windows (https://github.com/bravoserver/bravo/issues/111#issuecomment-826990)
+        try:
+            resp_file = open(temp.name, "wb")
+            resp_file.write( response.read() )
+            resp_file.close()
+            Path(output_dir[z_index]).mkdir(parents=True, exist_ok=True)
+            try:
+                with zipfile.ZipFile(temp.name, 'r') as zip_ref:
+                    zip_ref.extractall(output_dir[z_index])
+            except zipfile.BadZipFile:
+                logger.error ( "Something went wrong" )
+                os.rmdir ( output_dir[z_index] )
+                raise RodosPyException ( open(temp.name).read()  )
+        finally:
+            temp.close() 
+            os.unlink(temp.name)   # For Windows, remove manually
+
+        self.filepath = output_dir
+        return self.filepath
+      
+    def envelope(self):
+        "Get the bbox of data"
+        gis_data = gpkg_driver.Open(self.gpkg_file())
+        layer = gis_data.GetLayer(0) # grid
+        return layer.GetExtent()
+######
 
 class GridSeries(object):
     "Series of grid results"
@@ -392,7 +575,7 @@ class GridSeries(object):
                 times.append(time_value)
         times.sort()
         # convert epoch times to datetime objects
-        return list(map(datetime.fromtimestamp,times))
+        return list(map(lambda t: None if t == 0 else datetime.fromtimestamp(t), times))
 
     def levels(self):
         "TODO"
@@ -431,6 +614,14 @@ class GridSeries(object):
         "Read and save GeoPackage file from WPS service"
         if output_dir==None:
             output_dir = self.output_dir
+            
+        if force is False:
+            # Check if filepath does exists
+            filelist = os.listdir(output_dir[z_index])
+            if len(filelist) > 0:
+                # Return the existing file
+                return os.path.join(output_dir[z_index], filelist[0])
+
         wps_input = [
                 ('taskArg', 
                  "project='{}'&amp;model='{}'".format(self.task.project.name,\
@@ -481,7 +672,7 @@ class GridSeries(object):
         "Get the bbox of data"
         gis_data = gpkg_driver.Open(self.gpkg_file())
         layer = gis_data.GetLayer(0) # grid
-        return layer.GetExtent()    
+        return layer.GetExtent()
 
     def max(self,time_value=None):
         """
@@ -527,24 +718,15 @@ class GridSeries(object):
             area += feature.GetGeometryRef().GetArea()
         return area
 
-    def timeSeries(self,lon,lat):
-        "extract time series in singe point"
+    def timeSeries(self, lon,lat):
+        "extract time series in single point"
         times = self.times
-        point = ogr.Geometry(ogr.wkbPoint)
-        point.AddPoint( lon,lat )
+        return self.timeSeriesAtCell(self.getCell(lon,lat))
+
+    def timeSeriesAtCell(self, cell):
+        "extract time series in single point"
+        times = self.times
         gis_data = gpkg_driver.Open(self.gpkg_file())
-        layer = gis_data.GetLayer(0) # grid
-        transform = osr.CoordinateTransformation(wgs84_cs,layer.GetSpatialRef())
-        point.Transform( transform )
-        found = False
-        for feature in layer:
-            data_geom = feature.GetGeometryRef()
-            if data_geom.Intersects( point ):
-                cell = float(feature.GetField("Cell"))
-                found = True
-                break
-        if not found:
-            return None
         layer = gis_data.GetLayer(2) # view
         layer.SetAttributeFilter( "cell={:d}".format(int(cell)) )
         values = {}
@@ -561,9 +743,7 @@ class GridSeries(object):
         return {"times": list(map(lambda n: None if n == 0 else datetime.fromtimestamp(n), x)), 
                 "values": y, 
                 "unit": self.unit, 
-                "title": "{} at point ({},{})".format(self.name,
-                                                      "{0:.3f}".format(lon),
-                                                      "{0:.3f}".format(lat))
+                "title": "{} at cell {}".format(self.name, cell)
                 }
 
     def getBbox(self):
@@ -599,6 +779,24 @@ class GridSeries(object):
         polygon = ogr.Geometry( ogr.wkbPolygon )
         polygon.addGeometry (ring )
         return polygon.Centroid()
+
+    def getCell(self,lon,lat):
+        "extract cell in single point"
+        point = ogr.Geometry(ogr.wkbPoint)
+        point.AddPoint( lon,lat )
+        gis_data = gpkg_driver.Open(self.gpkg_file())
+        layer = gis_data.GetLayer(0) # grid
+        transform = osr.CoordinateTransformation(wgs84_cs,layer.GetSpatialRef())
+        point.Transform( transform )
+        found = False
+        for feature in layer:
+            data_geom = feature.GetGeometryRef()
+            if data_geom.Intersects( point ):
+                cell = float(feature.GetField("Cell"))
+                found = True
+                break
+
+        return cell if found else None
 
     def valueAtDistance(self,center_lon,center_lat,distance_in_km):
         "get maximum value in the distance of X meters. Center must be given also."
@@ -674,6 +872,7 @@ class GridSeries(object):
             shapefile_layer.CreateFeature( feature )
         data_source = None
         return shapefile_path
+      
 
 class VectorGridSeries(object):
     "Series of vector grid results"
@@ -706,7 +905,7 @@ class VectorGridSeries(object):
         "generate filepath if check if it does exists"
         if not os.path.isdir(self.output_dir):
             threshold = 1e-15
-            self.save_gpkg(None,True,threshold)
+            self.save_gpkg(None,False,threshold)
         return self.output_dir
     
     def gpkg_file(self):
@@ -729,6 +928,14 @@ class VectorGridSeries(object):
         "Read and save GeoPackage file from WPS service"
         if output_dir==None:
             output_dir = self.output_dir
+            
+        if force is False:
+            # Check if filepath does exists
+            filelist = os.listdir(output_dir)
+            if len(filelist) > 0:
+                # Return the existing file
+                return os.path.join(output_dir, filelist[0])
+
         wps_input = [
                 ('taskArg', 
                  "project='{}'&amp;model='{}'".format(self.task.project.name,\
@@ -774,3 +981,50 @@ class VectorGridSeries(object):
 
         self.filepath = output_dir
         return self.filepath
+      
+    def valueAtCell(self,cell):
+        "extract values in cell"
+        gis_data = gpkg_driver.Open(self.gpkg_file())
+        layer = gis_data.GetLayer(0) # only one layer
+        layer.SetAttributeFilter( "cell={:d}".format(int(cell)) )
+        value = {
+            "time": self.time_index,
+            "level": self.z_index
+        }
+        for feature in layer:
+            for i in range(feature.GetFieldCount()):
+                value[feature.GetFieldDefnRef(i).GetName()] = feature.GetField(i)
+                
+        return value
+    
+    # Do not use to extract wind field
+    # Wind field arrows might not intersect with the point (lon,lat)
+    def valueAt(self,lon,lat):
+        "extract values in single point"
+        point = ogr.Geometry(ogr.wkbPoint)
+        point.AddPoint( lon,lat )
+        gis_data = gpkg_driver.Open(self.gpkg_file())
+        layer = gis_data.GetLayer(0) # only one layer
+        transform = osr.CoordinateTransformation(wgs84_cs,layer.GetSpatialRef())
+        point.Transform( transform )
+        found = False
+        for feature in layer:
+            data_geom = feature.GetGeometryRef()
+            if data_geom.Intersects( point ):
+                cell = float(feature.GetField("Cell"))
+                found = True
+                break
+        print(found)
+        if not found:
+            return None
+        
+        layer.SetAttributeFilter( "cell={:d}".format(int(cell)) )
+        value = {
+            "time": self.time_index,
+            "level": self.z_index
+        }
+        for feature in layer:
+            for i in range(feature.GetFieldCount()):
+                value[feature.GetFieldDefnRef(i).GetName()] = feature.GetField(i)
+                
+        return value
