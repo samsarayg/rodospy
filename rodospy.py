@@ -484,7 +484,7 @@ class GridSeries_(object):
         if output_dir==None:
             output_dir = self.output_dir
             
-        if force is False:
+        if force is False and os.path.exists(output_dir[z_index]):
             # Check if filepath does exists
             filelist = os.listdir(output_dir[z_index])
             if len(filelist) > 0:
@@ -929,7 +929,7 @@ class VectorGridSeries(object):
         if output_dir==None:
             output_dir = self.output_dir
             
-        if force is False:
+        if force is False and os.path.exists(output_dir):
             # Check if filepath does exists
             filelist = os.listdir(output_dir)
             if len(filelist) > 0:
